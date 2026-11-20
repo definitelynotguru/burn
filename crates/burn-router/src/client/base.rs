@@ -5,9 +5,9 @@ use alloc::vec::Vec;
 use burn_backend::RandomKey;
 use burn_backend::{
     DType, DeviceDescription, DeviceTelemetry, EnvironmentBundle, EnvironmentError, EnvironmentId,
-    EnvironmentOrigin, ExecutionMode, ExecutionModeToken, ExecutionStatistics, MemoryReport, Peak,
-    PeakError, PeakKey, ProfileDuration, ProfileOptions, ProfileToken, TensorData,
-    UnknownExecutionMode,
+    EnvironmentOrigin, EnvironmentSummary, ExecutionMode, ExecutionModeToken, ExecutionStatistics,
+    HostTransfer, MemoryReport, Peak, PeakError, PeakKey, ProfileDuration, ProfileOptions,
+    ProfileToken, PruneOptions, Pruned, SaveOptions, TensorData, UnknownExecutionMode,
     backend::{DeviceId, DeviceOps, ExecutionError},
 };
 use burn_ir::{CapturedGraphId, GraphBindings, GraphId, OperationIr, TensorId, TensorIr};
@@ -187,7 +187,22 @@ pub trait RouterClient: Clone + Send + Sync + Sized {
 
     /// Serialize the compute environment `id`, after every operation
     /// registered so far on the calling stream.
-    fn environment_save(&self, id: EnvironmentId) -> Result<EnvironmentBundle, EnvironmentError> {
+    fn environment_save(
+        &self,
+        id: EnvironmentId,
+        options: SaveOptions,
+    ) -> Result<EnvironmentBundle, EnvironmentError> {
+        let _ = (id, options);
+        Err(environment_unsupported())
+    }
+
+    /// Count what the environment `id` of the interpreter's backend holds as
+    /// it stands — see
+    /// [`Backend::environment_summary`](burn_backend::Backend::environment_summary).
+    fn environment_summary(
+        &self,
+        id: EnvironmentId,
+    ) -> Result<EnvironmentSummary, EnvironmentError> {
         let _ = id;
         Err(environment_unsupported())
     }
@@ -201,6 +216,18 @@ pub trait RouterClient: Clone + Send + Sync + Sized {
         origin: EnvironmentOrigin,
     ) -> Result<(), EnvironmentError> {
         let _ = (id, origin);
+        Err(environment_unsupported())
+    }
+
+    /// Remove from the environment `id` of the interpreter's backend the
+    /// compiled kernels the work never loaded — see
+    /// [`Backend::environment_prune`](burn_backend::Backend::environment_prune).
+    fn environment_prune(
+        &self,
+        id: EnvironmentId,
+        options: PruneOptions,
+    ) -> Result<Pruned, EnvironmentError> {
+        let _ = (id, options);
         Err(environment_unsupported())
     }
 
@@ -224,6 +251,23 @@ pub trait RouterClient: Clone + Send + Sync + Sized {
     /// The peak throughput of the interpreter's device for each of `keys`.
     fn measure_peaks(&self, keys: &[PeakKey]) -> Vec<Result<Peak, PeakError>> {
         keys.iter().map(|_| Err(PeakError::Unsupported)).collect()
+    }
+
+    /// The peak throughput of the link from the interpreter's device to `to` for each of `sizes`.
+    #[allow(unused_variables)]
+    fn measure_link(&self, to: &Self::Device, sizes: &[u64]) -> Vec<Result<Peak, PeakError>> {
+        sizes.iter().map(|_| Err(PeakError::Unsupported)).collect()
+    }
+
+    /// The peak throughput of the link between the calling process and the interpreter's device
+    /// for each of `sizes`.
+    #[allow(unused_variables)]
+    fn measure_host_link(
+        &self,
+        transfer: HostTransfer,
+        sizes: &[u64],
+    ) -> Vec<Result<Peak, PeakError>> {
+        sizes.iter().map(|_| Err(PeakError::Unsupported)).collect()
     }
 
     /// Prepare the interpreter's backend for a graph capture — see

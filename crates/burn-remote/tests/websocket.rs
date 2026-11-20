@@ -2,7 +2,10 @@
 
 mod common;
 
-use burn_backend::{distributed::ReduceOperation, ops::CollectiveOps};
+use burn_backend::{
+    Backend, EnvironmentError, EnvironmentId, PruneOptions, distributed::ReduceOperation,
+    ops::CollectiveOps,
+};
 use burn_dispatch::{Dispatch, DispatchDevice};
 use burn_flex::Flex;
 use burn_remote::{
@@ -442,6 +445,90 @@ fn random_requests_keep_their_seeds_across_remote_reseeding() {
     device.seed(19);
     pending_int.into_data().assert_eq(&expected_int, false);
     pending_float.into_data().assert_eq(&expected_float, false);
+    rt.shutdown_background();
+}
+
+#[test]
+fn a_link_between_two_servers_is_timed_at_each_size_asked() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .build()
+        .unwrap();
+    let host_1 = serve(&rt, BackendServer::<Flex>::new(vec![Default::default()]));
+    let host_2 = serve(&rt, BackendServer::<Flex>::new(vec![Default::default()]));
+    let device_1 = Device::remote_options(&host_1).init().unwrap();
+    let device_2 = Device::remote_options(&host_2).init().unwrap();
+
+    let sizes = [1 << 20, 4096];
+
+    let peaks = device_1.measure_link(&device_2, &sizes);
+
+    assert_eq!(peaks.len(), sizes.len());
+    assert!(
+        peaks
+            .iter()
+            .all(|peak| peak.is_ok_and(|peak| peak.per_second > 0.0)),
+        "{peaks:?}"
+    );
+    let reversed = device_1.measure_link(&device_2, &[4096, 1 << 20]);
+    assert_eq!(reversed, [peaks[1], peaks[0]]);
+    // A size no server serves does not keep an uncached one from being measured.
+    let with_empty = device_1.measure_link(&device_2, &[0, 16 << 10]);
+    assert_eq!(with_empty[0], Err(burn_tensor::PeakError::Unsupported));
+    assert!(with_empty[1].is_ok(), "{with_empty:?}");
+
+    rt.shutdown_background();
+}
+
+#[test]
+fn a_remote_devices_host_link_is_timed_by_its_client() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .build()
+        .unwrap();
+    let host = serve(&rt, BackendServer::<Flex>::new(vec![Default::default()]));
+    let device = Device::remote_options(&host).init().unwrap();
+
+    let uploads =
+        device.measure_host_link(burn_tensor::HostTransfer::Upload, &[1 << 20, 0, u64::MAX]);
+    let downloads = device.measure_host_link(burn_tensor::HostTransfer::Download, &[4096]);
+
+    assert!(
+        uploads[0].is_ok_and(|peak| peak.per_second > 0.0),
+        "{uploads:?}"
+    );
+    assert_eq!(uploads[1], Err(burn_tensor::PeakError::Unsupported));
+    assert_eq!(uploads[2], Err(burn_tensor::PeakError::Unsupported));
+    assert!(
+        downloads[0].is_ok_and(|peak| peak.per_second > 0.0),
+        "{downloads:?}"
+    );
+
+    rt.shutdown_background();
+}
+
+#[test]
+fn a_link_within_a_server_is_its_backends_to_answer() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .build()
+        .unwrap();
+    let host = serve(
+        &rt,
+        BackendServer::<Flex>::new(vec![Default::default(), Default::default()]),
+    );
+    let device_0 = Device::remote_options(&host).init().unwrap();
+    let device_1 = Device::remote_options(&host)
+        .device_index(1)
+        .init()
+        .unwrap();
+
+    // Flex runs no link probe.
+    assert_eq!(
+        device_0.measure_link(&device_1, &[4096]),
+        [Err(burn_tensor::PeakError::Unsupported)]
+    );
+
     rt.shutdown_background();
 }
 
@@ -1206,6 +1293,64 @@ fn a_device_query_is_answered_by_its_handler() {
     let doubled = Tensor::<1>::from_floats([1.0, 2.0], &device) * 2.0;
     assert_eq!(doubled.try_into_vec_as::<f32>().unwrap(), vec![2.0, 4.0]);
 
+    rt.shutdown_background();
+}
+
+/// A prune is answered by the server's backend: one that keeps no environment
+/// says so in its own words, which only the round trip to it can carry back.
+#[test]
+fn a_prune_is_answered_by_the_servers_backend() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .build()
+        .unwrap();
+    let host = serve(&rt, BackendServer::<Flex>::new(vec![Default::default()]));
+    let device = Device::remote_options(&host).init().unwrap();
+    let id = EnvironmentId {
+        storage: 0,
+        name: "pruned".into(),
+        location: String::new(),
+    };
+
+    let answer =
+        Dispatch::environment_prune(device.as_dispatch(), id.clone(), PruneOptions::default());
+
+    // The server's backend's answer, not the client's own default.
+    let backends_own =
+        <Flex as Backend>::environment_prune(&Default::default(), id, PruneOptions::default());
+    assert_eq!(format!("{answer:?}"), format!("{backends_own:?}"));
+    assert!(
+        matches!(answer, Err(EnvironmentError::Unsupported { .. })),
+        "{answer:?}"
+    );
+    rt.shutdown_background();
+}
+
+/// A summary is answered by the server's backend, as a prune is: one that
+/// keeps no environment says so in its own words.
+#[test]
+fn a_summary_is_answered_by_the_servers_backend() {
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_io()
+        .build()
+        .unwrap();
+    let host = serve(&rt, BackendServer::<Flex>::new(vec![Default::default()]));
+    let device = Device::remote_options(&host).init().unwrap();
+    let id = EnvironmentId {
+        storage: 0,
+        name: "counted".into(),
+        location: String::new(),
+    };
+
+    let answer = Dispatch::environment_summary(device.as_dispatch(), id.clone());
+
+    // The server's backend's answer, not the client's own default.
+    let backends_own = <Flex as Backend>::environment_summary(&Default::default(), id);
+    assert_eq!(format!("{answer:?}"), format!("{backends_own:?}"));
+    assert!(
+        matches!(answer, Err(EnvironmentError::Unsupported { .. })),
+        "{answer:?}"
+    );
     rt.shutdown_background();
 }
 

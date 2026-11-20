@@ -15,8 +15,13 @@ use crate::distributed::{DistributedParamId, DistributedParams};
 
 use super::DeviceOps;
 use super::profile::profile_unsupported;
-use super::{DeviceDescription, DeviceTelemetry, MemoryReport, Peak, PeakError, PeakKey};
-use super::{EnvironmentBundle, EnvironmentError, EnvironmentId, EnvironmentOrigin};
+use super::{
+    DeviceDescription, DeviceTelemetry, HostTransfer, MemoryReport, Peak, PeakError, PeakKey,
+};
+use super::{
+    EnvironmentBundle, EnvironmentError, EnvironmentId, EnvironmentOrigin, EnvironmentSummary,
+    PruneOptions, Pruned, SaveOptions,
+};
 use super::{ExecutionMode, ExecutionModeToken, ExecutionStatistics, UnknownExecutionMode};
 use super::{ProfileDuration, ProfileOptions, ProfileToken, profile_system_time};
 
@@ -188,6 +193,33 @@ pub trait Backend:
     #[allow(unused_variables)]
     fn measure_peaks(device: &Self::Device, keys: &[PeakKey]) -> Vec<Result<Peak, PeakError>> {
         keys.iter().map(|_| Err(PeakError::Unsupported)).collect()
+    }
+
+    /// The peak throughput of the link from `from` to `to` for each of `sizes`, in order, in bytes
+    /// per second when one transfer moves that many bytes: the peak, or why the link has none.
+    /// Every size is [unsupported](PeakError::Unsupported) by a backend that runs no link probe,
+    /// and between a device and itself.
+    #[allow(unused_variables)]
+    fn measure_link(
+        from: &Self::Device,
+        to: &Self::Device,
+        sizes: &[u64],
+    ) -> Vec<Result<Peak, PeakError>> {
+        sizes.iter().map(|_| Err(PeakError::Unsupported)).collect()
+    }
+
+    /// The peak throughput of the link between the calling process and `device` for each of
+    /// `sizes`, in order, in bytes per second when one transfer moves that many bytes the way
+    /// `transfer` names: the peak, or why the link has none. It depends on where the caller is, so
+    /// a remote device answers for this process's network. Every size is
+    /// [unsupported](PeakError::Unsupported) by a backend that runs no host link probe.
+    #[allow(unused_variables)]
+    fn measure_host_link(
+        device: &Self::Device,
+        transfer: HostTransfer,
+        sizes: &[u64],
+    ) -> Vec<Result<Peak, PeakError>> {
+        sizes.iter().map(|_| Err(PeakError::Unsupported)).collect()
     }
 
     /// Name of the backend.
@@ -423,7 +455,9 @@ pub trait Backend:
 
     /// Serialize the compute environment `id` whole, after every operation
     /// registered so far on the calling stream, so what that work compiled
-    /// and tuned is in it.
+    /// and tuned is in it. The bundle carries the name `options` gives it and
+    /// the [stamp](super::BuildStamp) of the executable that saved it, the
+    /// server's for a remote device.
     ///
     /// # Errors
     ///
@@ -432,7 +466,23 @@ pub trait Backend:
     fn environment_save(
         _device: &Self::Device,
         _id: EnvironmentId,
+        _options: SaveOptions,
     ) -> Result<EnvironmentBundle, EnvironmentError> {
+        Err(EnvironmentError::unsupported())
+    }
+
+    /// Count what the compute environment `id` holds as it stands, without
+    /// saving it and without waiting on the operations registered before:
+    /// cheap enough to ask after every step of a build.
+    ///
+    /// # Errors
+    ///
+    /// The backend keeps no compute environment, `id` lives in a storage
+    /// `device` does not reach, or the storage refused the read.
+    fn environment_summary(
+        _device: &Self::Device,
+        _id: EnvironmentId,
+    ) -> Result<EnvironmentSummary, EnvironmentError> {
         Err(EnvironmentError::unsupported())
     }
 
@@ -452,6 +502,26 @@ pub trait Backend:
         _id: EnvironmentId,
         _origin: EnvironmentOrigin,
     ) -> Result<(), EnvironmentError> {
+        Err(EnvironmentError::unsupported())
+    }
+
+    /// Remove from the compute environment `id` the compiled kernels the work
+    /// never loaded, after every operation registered so far on the calling
+    /// stream: those only an autotune race loaded, those another executable
+    /// compiled, and the build records `options` does not keep. What the work
+    /// loaded and the autotune answers stay. A
+    /// [save](Self::environment_save) after it holds no space the removed
+    /// entries took.
+    ///
+    /// # Errors
+    ///
+    /// The backend keeps no compute environment, `id` lives in a storage
+    /// `device` does not reach, or the storage refused the write.
+    fn environment_prune(
+        _device: &Self::Device,
+        _id: EnvironmentId,
+        _options: PruneOptions,
+    ) -> Result<Pruned, EnvironmentError> {
         Err(EnvironmentError::unsupported())
     }
 

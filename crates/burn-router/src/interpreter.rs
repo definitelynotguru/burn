@@ -13,10 +13,10 @@ use alloc::{
 };
 use burn_backend::{
     Backend, BackendGraph, DType, DeviceDescription, DeviceOps, DeviceTelemetry, EnvironmentBundle,
-    EnvironmentError, EnvironmentId, EnvironmentOrigin, ExecutionError, ExecutionMode,
-    ExecutionModeToken, ExecutionStatistics, FloatDType, MemoryReport, Peak, PeakError, PeakKey,
-    ProfileDuration, ProfileOptions, ProfileToken, Shape, TensorData, TensorMetadata,
-    TensorPrimitive, ops::TransactionPrimitive,
+    EnvironmentError, EnvironmentId, EnvironmentOrigin, EnvironmentSummary, ExecutionError,
+    ExecutionMode, ExecutionModeToken, ExecutionStatistics, FloatDType, MemoryReport, Peak,
+    PeakError, PeakKey, ProfileDuration, ProfileOptions, ProfileToken, PruneOptions, Pruned,
+    SaveOptions, Shape, TensorData, TensorMetadata, TensorPrimitive, ops::TransactionPrimitive,
 };
 use burn_ir::{
     ActivationOperationIr, BackendIr, BaseOperationIr, BoolOperationIr, FloatOperationIr,
@@ -2557,8 +2557,17 @@ impl<B: BackendIr> TensorInterpreter<B> {
     pub fn environment_save(
         &self,
         id: EnvironmentId,
+        options: SaveOptions,
     ) -> Result<EnvironmentBundle, EnvironmentError> {
-        B::environment_save(&self.device, id)
+        B::environment_save(&self.device, id, options)
+    }
+
+    /// Count what the environment `id` of the backend holds as it stands.
+    pub fn environment_summary(
+        &self,
+        id: EnvironmentId,
+    ) -> Result<EnvironmentSummary, EnvironmentError> {
+        B::environment_summary(&self.device, id)
     }
 
     /// Bring what `origin` holds into the environment `id` of the backend.
@@ -2568,6 +2577,16 @@ impl<B: BackendIr> TensorInterpreter<B> {
         origin: EnvironmentOrigin,
     ) -> Result<(), EnvironmentError> {
         B::environment_merge(&self.device, id, origin)
+    }
+
+    /// Remove from the environment `id` of the backend the compiled kernels the work never
+    /// loaded, where the calling stream stands.
+    pub fn environment_prune(
+        &self,
+        id: EnvironmentId,
+        options: PruneOptions,
+    ) -> Result<Pruned, EnvironmentError> {
+        B::environment_prune(&self.device, id, options)
     }
 
     /// What the backend's device is, as its driver states it.
@@ -2589,6 +2608,11 @@ impl<B: BackendIr> TensorInterpreter<B> {
     /// The peak throughput of the backend's device for each of `keys`.
     pub fn measure_peaks(&self, keys: &[PeakKey]) -> Vec<Result<Peak, PeakError>> {
         B::measure_peaks(&self.device, keys)
+    }
+
+    /// What the link from the interpreter's device to `to` delivers across transfer sizes.
+    pub fn measure_link(&self, to: &B::Device, sizes: &[u64]) -> Vec<Result<Peak, PeakError>> {
+        B::measure_link(&self.device, to, sizes)
     }
 
     /// Prepare the backend for a graph capture.

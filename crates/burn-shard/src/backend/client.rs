@@ -3,7 +3,8 @@ use std::{any::Any, sync::Arc};
 
 use burn_backend::{
     DType, DTypeUsageSet, DeviceSettings, EnvironmentBundle, EnvironmentError, EnvironmentId,
-    EnvironmentOrigin, ExecutionError, ExecutionMode, ExecutionModeToken, TensorData,
+    EnvironmentOrigin, EnvironmentSummary, ExecutionError, ExecutionMode, ExecutionModeToken,
+    PruneOptions, Pruned, SaveOptions, TensorData,
 };
 use burn_ir::{
     BackendIr, CapturedGraphId, GraphBindings, GraphId, HandleKind, OperationIr, TensorId, TensorIr,
@@ -166,7 +167,18 @@ impl RouterClient for ShardClient {
         Err(shard_environment())
     }
 
-    fn environment_save(&self, _id: EnvironmentId) -> Result<EnvironmentBundle, EnvironmentError> {
+    fn environment_save(
+        &self,
+        _id: EnvironmentId,
+        _options: SaveOptions,
+    ) -> Result<EnvironmentBundle, EnvironmentError> {
+        Err(shard_environment())
+    }
+
+    fn environment_summary(
+        &self,
+        _id: EnvironmentId,
+    ) -> Result<EnvironmentSummary, EnvironmentError> {
         Err(shard_environment())
     }
 
@@ -175,6 +187,14 @@ impl RouterClient for ShardClient {
         _id: EnvironmentId,
         _origin: EnvironmentOrigin,
     ) -> Result<(), EnvironmentError> {
+        Err(shard_environment())
+    }
+
+    fn environment_prune(
+        &self,
+        _id: EnvironmentId,
+        _options: PruneOptions,
+    ) -> Result<Pruned, EnvironmentError> {
         Err(shard_environment())
     }
 

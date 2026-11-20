@@ -58,6 +58,7 @@ fn a_sharded_compute_device_lists_its_members_in_order() {
     let device = sharded_compute(3);
 
     assert_eq!(device.members::<Flex>(), Some(vec![FlexDevice; 3]));
+    assert_eq!(device.num_members(), 3);
 }
 
 #[test]
@@ -168,6 +169,7 @@ fn ops_along_a_dim_match_one_device_for_every_sharding() {
             check_unary!(num_members, &input, [dim: usize] |B, a| B::softmax(a, dim));
             check_unary!(num_members, &input, [dim: usize] |B, a| B::float_cumsum(a, dim));
             check_unary!(num_members, &input, [dim: usize] |B, a| B::float_topk(a, dim, 2));
+            check_unary!(num_members, &input, [dim: usize] |B, a| B::float_repeat_dim(a, dim, 2));
         }
     }
 }
@@ -188,6 +190,9 @@ fn layout_ops_match_one_device_for_every_sharding() {
         check_unary!(num_members, &input, [ranges: [Slice; 3]] |B, a| B::float_slice(a, &ranges));
         check_binary!(num_members, &input, &data([4, 2, 5], 3), [ranges: [Slice; 3]] |B, a, b| {
             B::float_slice_assign(a, &ranges, b)
+        });
+        check_binary!(num_members, &input, &data([4, 2, 5], 4), |B, a, b| {
+            B::float_cat(vec![a, b], 1)
         });
     }
 }
@@ -242,6 +247,10 @@ fn split_tensors_stay_split_where_megatron_keeps_them() {
     assert_eq!(sharding_of(&Shard::float_sum_dim(x.clone(), 1)), PartialSum);
     assert_eq!(sharding_of(&Shard::relu(x.clone())), Split { dim: 1 });
     assert_eq!(sharding_of(&Shard::float_exp(x.clone())), Split { dim: 1 });
+    assert_eq!(
+        sharding_of(&Shard::float_repeat_dim(x.clone(), 0, 3)),
+        Split { dim: 1 }
+    );
     assert_eq!(sharding_of(&Shard::softmax(x, 0)), Split { dim: 1 });
 }
 

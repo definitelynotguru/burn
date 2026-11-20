@@ -4,9 +4,10 @@ use crate::{PeerAddr, PeerId};
 use burn_backend::RandomKey;
 use burn_backend::{
     DeviceDescription, DeviceId, DeviceOps, DeviceTelemetry, EnvironmentBundle, EnvironmentError,
-    EnvironmentId, EnvironmentOrigin, ExecutionError, ExecutionMode, ExecutionModeToken,
-    ExecutionStatistics, MemoryReport, Peak, PeakError, PeakKey, ProfileDuration, ProfileOptions,
-    ProfileToken, RouterDeviceType, StreamId, TensorData,
+    EnvironmentId, EnvironmentOrigin, EnvironmentSummary, ExecutionError, ExecutionMode,
+    ExecutionModeToken, ExecutionStatistics, HostTransfer, MemoryReport, Peak, PeakError, PeakKey,
+    ProfileDuration, ProfileOptions, ProfileToken, PruneOptions, Pruned, RouterDeviceType,
+    SaveOptions, StreamId, TensorData,
 };
 use burn_ir::{CapturedGraphId, TensorIr};
 use burn_router::{MultiBackendBridge, RouterClient, RouterTensor, get_client};
@@ -151,10 +152,23 @@ impl RouterClient for RemoteClient {
             .map_err(service_failed)?
     }
 
-    fn environment_save(&self, id: EnvironmentId) -> Result<EnvironmentBundle, EnvironmentError> {
+    fn environment_save(
+        &self,
+        id: EnvironmentId,
+        options: SaveOptions,
+    ) -> Result<EnvironmentBundle, EnvironmentError> {
         let stream_id = StreamId::current();
         self.handle
-            .submit_blocking(move |s| s.environment_save(stream_id, id))
+            .submit_blocking(move |s| s.environment_save(stream_id, id, options))
+            .map_err(service_failed)?
+    }
+
+    fn environment_summary(
+        &self,
+        id: EnvironmentId,
+    ) -> Result<EnvironmentSummary, EnvironmentError> {
+        self.handle
+            .submit_blocking(move |s| s.environment_summary(id))
             .map_err(service_failed)?
     }
 
@@ -166,6 +180,17 @@ impl RouterClient for RemoteClient {
         let stream_id = StreamId::current();
         self.handle
             .submit_blocking(move |s| s.environment_merge(stream_id, id, origin))
+            .map_err(service_failed)?
+    }
+
+    fn environment_prune(
+        &self,
+        id: EnvironmentId,
+        options: PruneOptions,
+    ) -> Result<Pruned, EnvironmentError> {
+        let stream_id = StreamId::current();
+        self.handle
+            .submit_blocking(move |s| s.environment_prune(stream_id, id, options))
             .map_err(service_failed)?
     }
 
@@ -195,6 +220,18 @@ impl RouterClient for RemoteClient {
         self.handle
             .submit_blocking(move |s| s.measure_peaks(requested))
             .unwrap_or_else(|_| vec![Err(PeakError::Unsupported); keys.len()])
+    }
+
+    fn measure_link(&self, to: &RemoteDevice, sizes: &[u64]) -> Vec<Result<Peak, PeakError>> {
+        super::link::LinkProber::new(self, to).measure(sizes)
+    }
+
+    fn measure_host_link(
+        &self,
+        transfer: HostTransfer,
+        sizes: &[u64],
+    ) -> Vec<Result<Peak, PeakError>> {
+        super::host_link::HostLinkProber::new(self).measure(transfer, sizes)
     }
 
     fn graph_prepare(&self) -> Result<(), ExecutionError> {
@@ -670,6 +707,15 @@ impl MultiBackendBridge for RemoteBridge {
         out_dtype: BoolDType,
     ) -> Self::TensorHandle {
         tensor.change_backend(target_device, out_dtype.into())
+    }
+
+    fn change_backend_quantized(
+        tensor: Self::TensorHandle,
+        _shape: burn_backend::Shape,
+        target_device: &Self::Device,
+    ) -> Self::TensorHandle {
+        let dtype = tensor.tensor.dtype;
+        tensor.change_backend(target_device, dtype)
     }
 }
 
